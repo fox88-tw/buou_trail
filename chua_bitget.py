@@ -64,9 +64,9 @@ class MultiAssetTradingBot:
         self.detected_positions = set()
         # 检查持仓模式
         if not self.is_single_position_mode():
-            self.logger.error("持仓模式不是双向持仓，程序即将停止。")
-            self.send_feishu_notification("持仓模式不是双向持仓，程序即将停止。")
-            raise SystemExit("持仓模式不是双向持仓，程序停止。")
+            self.logger.error("持仓模式无法双向持仓,可能是因为手上有持仓单子导致，请先平仓更改双向持仓后再运行程序。")
+            self.send_feishu_notification("持仓模式无法双向持仓,可能是因为手上有持仓单子导致，请先平仓更改双向持仓后再运行程序。")
+            raise SystemExit("持仓模式无法双向持仓,可能是因为手上有持仓单子导致，请先平仓更改双向持仓后再运行程序。")
 
     def is_single_position_mode(self):
         try:
@@ -129,11 +129,22 @@ class MultiAssetTradingBot:
             amount = float(position['contracts'])  # 使用当前持仓数量进行一次性清仓
 
             # 创建平仓订单，并加上 reduceOnly 参数
-            order = self.exchange.create_order(symbol, 'market', side, amount)
-            # print(order)
-            self.logger.info(f"Closed full position for {symbol} with size {amount}, side: {side}")
-            self.send_feishu_notification(f"Closed full position for {symbol} with size {amount}, side: {side}")
-            return True
+
+            bg_symbol = symbol.replace("/", "").replace(":USDT", "")
+
+            # order = self.exchange.create_order(symbol, 'market', side, amount)
+            order = self.exchange.privateMixPostV2MixOrderClosePositions({'symbol': bg_symbol, 'holdSide': side, 'productType': 'USDT-FUTURES'})
+
+            if order['code'] == '00000' and order['data']['successList']:
+                self.logger.info(f"Closed position for {symbol} with size {amount}, side: {side}")
+                self.send_feishu_notification(f"Closed position for {symbol} with size {amount}, side: {side}")
+                self.detected_positions.discard(symbol)
+                self.highest_profits.pop(symbol, None)
+                self.current_tiers.pop(symbol, None)
+                return True
+            else:
+                self.logger.error(f"Failed to close position for {symbol}: {order}")
+                return False
         except Exception as e:
             self.logger.error(f"Error closing position for {symbol}: {e}")
             return False
@@ -205,7 +216,7 @@ class MultiAssetTradingBot:
                 self.logger.info(f"回撤到{self.low_trail_stop_loss_pct:.2f}% 止盈")
                 if profit_pct <= self.low_trail_stop_loss_pct:
                     self.logger.info(f"{symbol} 触发低档保护止盈，当前盈亏回撤到: {profit_pct:.2f}%，执行平仓")
-                    self.close_position(symbol, 'close_long' if side == 'long' else 'close_short')
+                    self.close_position(symbol, side)
                     continue
 
             elif current_tier == "第一档移动止盈":
@@ -214,7 +225,7 @@ class MultiAssetTradingBot:
                 if profit_pct <= trail_stop_loss:
                     self.logger.info(
                         f"{symbol} 达到利润回撤阈值，当前档位：第一档移动止盈，最高盈亏: {highest_profit:.2f}%，当前盈亏: {profit_pct:.2f}%，执行平仓")
-                    self.close_position(symbol, 'close_long' if side == 'long' else 'close_short')
+                    self.close_position(symbol, side)
                     continue
 
             elif current_tier == "第二档移动止盈":
@@ -223,12 +234,12 @@ class MultiAssetTradingBot:
                 if profit_pct <= trail_stop_loss:
                     self.logger.info(
                         f"{symbol} 达到利润回撤阈值，当前档位：第二档移动止盈，最高盈亏: {highest_profit:.2f}%，当前盈亏: {profit_pct:.2f}%，执行平仓")
-                    self.close_position(symbol, 'close_long' if side == 'long' else 'close_short')
+                    self.close_position(symbol, side)
                     continue
 
             if profit_pct <= -self.stop_loss_pct:
                 self.logger.info(f"{symbol} 触发止损，当前盈亏: {profit_pct:.2f}%，执行平仓")
-                self.close_position(symbol, 'close_long' if side == 'long' else 'close_short')
+                self.close_position(symbol, side)
 
 
 if __name__ == '__main__':
