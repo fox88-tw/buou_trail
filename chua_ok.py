@@ -55,7 +55,7 @@ class MultiAssetTradingBot:
         # 用于记录每个持仓的最高盈利值和当前档位
         self.highest_profits = {}
         self.current_tiers = {}
-        self.detected_positions = set()
+        self.detected_positions = {}
         # 获取持仓模式
         self.position_mode = self.get_position_mode()
 
@@ -94,7 +94,7 @@ class MultiAssetTradingBot:
         try:
             while True:
                 self.monitor_positions()
-                time.sleep(monitor_interval)
+                time.sleep(self.monitor_interval)
         except KeyboardInterrupt:
             self.logger.info("程序收到中断信号，开始退出...")
         except Exception as e:
@@ -127,7 +127,7 @@ class MultiAssetTradingBot:
             if order['code'] == '0':
                 self.logger.info(f"Closed position for {symbol} with size {amount}, side: {pos_side}")
                 self.send_feishu_notification(f"Closed position for {symbol} with size {amount}, side: {side}")
-                self.detected_positions.discard(symbol)
+                self.detected_positions.pop(symbol, None)
                 self.highest_profits.pop(symbol, None)
                 self.current_tiers.pop(symbol, None)
                 return True
@@ -142,11 +142,12 @@ class MultiAssetTradingBot:
         positions = self.fetch_positions()
         current_symbols = set(position['symbol'] for position in positions if float(position['contracts']) != 0)
 
-        closed_symbols = self.detected_positions - current_symbols
+        closed_symbols = set(self.detected_positions.keys()) - current_symbols
+
         for symbol in closed_symbols:
             self.logger.info(f"手动平仓检测：{symbol} 已平仓，从监控中移除")
             self.send_feishu_notification(f"手动平仓检测：{symbol} 已平仓，从监控中移除")
-            self.detected_positions.discard(symbol)
+            self.detected_positions.pop(symbol, None)
 
         for position in positions:
             symbol = position['symbol']
@@ -163,17 +164,26 @@ class MultiAssetTradingBot:
             if symbol in self.blacklist:
                 if symbol not in self.detected_positions:
                     self.send_feishu_notification(f"检测到黑名单品种：{symbol}，跳过监控")
-                    self.detected_positions.add(symbol)
+                    self.detected_positions[symbol] = position_amt
                 continue
 
+            # 首次检测仓位
             if symbol not in self.detected_positions:
-                self.detected_positions.add(symbol)
+                self.detected_positions[symbol] = position_amt  # 存储仓位数量
                 self.highest_profits[symbol] = 0
                 self.current_tiers[symbol] = "无"
                 self.logger.info(
                     f"首次检测到仓位：{symbol}, 仓位数量: {position_amt}, 开仓价格: {entry_price}, 方向: {side}")
                 self.send_feishu_notification(
                     f"首次检测到仓位：{symbol}, 仓位数量: {position_amt}, 开仓价格: {entry_price}, 方向: {side}")
+
+            # 检测是否有加仓
+            elif position_amt > self.detected_positions[symbol]:
+                self.highest_profits[symbol] = 0  # 重置最高盈利
+                self.current_tiers[symbol] = "无"  # 重置档位
+                self.detected_positions[symbol] = position_amt  # 更新持仓数量
+                self.logger.info(f"{symbol} 检测到加仓，重置最高盈利和档位。")
+                continue  # 跳出当前循环，进入下一个仓位检测
 
             # 计算盈亏
             if side == 'long':
