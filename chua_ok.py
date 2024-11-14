@@ -122,7 +122,7 @@ class MultiAssetTradingBot:
                 # 在 net_mode 模式下，不区分方向，系统会自动平仓
                 pos_side = 'net'
 
-            order = self.trading_bot.close_positions(instId=market_symbol, mgnMode=td_mode, posSide=pos_side)
+            order = self.trading_bot.close_positions(instId=market_symbol, mgnMode=td_mode, posSide=pos_side, autoCxl='true')
 
             if order['code'] == '0':
                 self.logger.info(f"Closed position for {symbol} with size {amount}, side: {pos_side}")
